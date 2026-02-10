@@ -1,75 +1,176 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import datetime
 
-# --- 1. SETUP ---
-st.set_page_config(page_title="Ultra Max Production Grid", layout="wide")
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Ultra Max Factory Manager", layout="wide")
 
-# Define our Hourly Columns
-TIME_SLOTS = ["9-10", "10-11", "11-12", "12-1", "2-3", "3-4", "4-5", "5-6"]
+# --- FILE STORAGE ---
+WORKER_FILE = "db_workers.csv"
+STYLE_FILE = "db_styles.csv"
+GRID_FILE = "db_production_grid.csv"
 
-# --- 2. DATA CORE ---
-DB_FILE = "hourly_production_db.csv"
+# --- HELPER FUNCTIONS ---
+def load_csv(file, default_data):
+    if os.path.exists(file):
+        return pd.read_csv(file)
+    return pd.DataFrame(default_data)
 
-def load_data():
-    if os.path.exists(DB_FILE):
-        return pd.read_csv(DB_FILE)
-    # If no file, create a blank starting grid for 50 workers
-    initial_data = []
-    for i in range(1, 51):
-        row = {"Worker Name": f"Worker {i}", "Style": ""}
-        for slot in TIME_SLOTS:
-            row[slot] = 0  # Default production is 0
-        initial_data.append(row)
-    return pd.DataFrame(initial_data)
+# --- 1. INITIALIZE DATA ---
+# Workers: Name and Daily Wage (from your screenshot)
+if 'workers_df' not in st.session_state:
+    default_workers = {
+        "Worker Name": ["Nazim", "Rahul", "Tanu", "Raju", "Rita"] + [f"Worker {i}" for i in range(6, 21)],
+        "Daily Wage": [500, 400, 600, 200, 300] + [350] * 15
+    }
+    st.session_state['workers_df'] = load_csv(WORKER_FILE, default_workers)
 
-if 'grid_data' not in st.session_state:
-    st.session_state['grid_data'] = load_data()
+# Styles: Name, Challan, and Issue Qty (from your screenshot)
+if 'styles_df' not in st.session_state:
+    default_styles = {
+        "Style Name": ["1006YKBLUE", "1005YKBLACK", "1888WINE"],
+        "Challan": ["10003", "10004", "10005"],
+        "Issue Qty": [200, 150, 300]
+    }
+    st.session_state['styles_df'] = load_csv(STYLE_FILE, default_styles)
 
-# --- 3. UI TABS ---
-tab1, tab2 = st.tabs(["🕒 Hourly Production Grid", "📊 Daily Summary"])
+# Production Grid: Rows = Workers, Cols = Time Slots
+time_slots = ["9-10", "10-11", "11-12", "12-13", "13-14", "14-15", "15-16", "16-17", "17-18"]
 
+if 'grid_df' not in st.session_state:
+    # Create the grid based on current workers
+    current_workers = st.session_state['workers_df']['Worker Name'].tolist()
+    
+    # Load existing grid or create new
+    if os.path.exists(GRID_FILE):
+        saved_grid = pd.read_csv(GRID_FILE)
+        # Ensure rows match current worker list (logic to merge if needed)
+        st.session_state['grid_df'] = saved_grid
+    else:
+        # Create blank grid
+        blank_data = {"Worker Name": current_workers}
+        for slot in time_slots:
+            blank_data[slot] = None # Empty initially
+        st.session_state['grid_df'] = pd.DataFrame(blank_data)
+
+# --- TABS LAYOUT ---
+tab1, tab2, tab3 = st.tabs(["⚙️ Setup (Workers/Styles)", "🏭 Floor Sheet (Excel Grid)", "💰 Costing & Challan"])
+
+# --- TAB 1: SETUP ---
 with tab1:
-    st.title("Digital Production Sheet")
-    st.info("💡 Instructions: Type the **Style Name** in the Style column and the **Pieces Produced** in the hourly slots. The app saves automatically when you click the button below.")
-
-    # --- THE EDITABLE GRID ---
-    # This allows you to edit 50 rows at once like Excel
-    edited_df = st.data_editor(
-        st.session_state['grid_data'],
-        use_container_width=True,
-        num_rows="dynamic", # Allows you to add/delete workers
-        column_config={
-            "Worker Name": st.column_config.TextColumn("Employee Name", width="medium", required=True),
-            "Style": st.column_config.TextColumn("Current Style", width="small"),
-        }
-    )
-
-    # Save Button
-    if st.button("💾 Save All Changes"):
-        edited_df.to_csv(DB_FILE, index=False)
-        st.session_state['grid_data'] = edited_df
-        st.success(f"Successfully updated production for {len(edited_df)} workers!")
-
-with tab2:
-    st.header("Daily Analytics")
-    df = st.session_state['grid_data']
-    
-    # Calculate Total Pieces across all time slots
-    df['Total Daily'] = df[TIME_SLOTS].sum(axis=1)
-    
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Top Performers")
-        top_workers = df[['Worker Name', 'Total Daily']].sort_values(by='Total Daily', ascending=False).head(10)
-        st.table(top_workers)
-        
-    with col2:
-        st.subheader("Hourly Peak Flow")
-        hourly_totals = df[TIME_SLOTS].sum()
-        st.bar_chart(hourly_totals)
+        st.subheader("Worker Master List")
+        edited_workers = st.data_editor(st.session_state['workers_df'], num_rows="dynamic", use_container_width=True)
+        if st.button("💾 Save Workers"):
+            edited_workers.to_csv(WORKER_FILE, index=False)
+            st.session_state['workers_df'] = edited_workers
+            st.rerun()
 
-    # Download for Office Use
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Excel/CSV Report", data=csv, file_name="daily_production.csv", mime="text/csv")
+    with col2:
+        st.subheader("Style & Challan Master")
+        edited_styles = st.data_editor(st.session_state['styles_df'], num_rows="dynamic", use_container_width=True)
+        if st.button("💾 Save Styles"):
+            edited_styles.to_csv(STYLE_FILE, index=False)
+            st.session_state['styles_df'] = edited_styles
+            st.rerun()
+
+# --- TAB 2: FLOOR SHEET (THE GRID) ---
+with tab2:
+    st.header("Daily Production Grid")
+    st.info("Select the **Style** for each hour. The app will calculate the cost automatically based on the worker's wage.")
+
+    # Prepare Dropdown Options
+    style_list = st.session_state['styles_df']['Style Name'].tolist()
+    
+    # Configure Columns
+    col_config = {
+        "Worker Name": st.column_config.TextColumn("Worker", disabled=True)
+    }
+    for slot in time_slots:
+        col_config[slot] = st.column_config.SelectColumn(
+            label=f"{slot} (Style)",
+            options=style_list,
+            required=False
+        )
+
+    # Show Editable Grid
+    edited_grid = st.data_editor(
+        st.session_state['grid_df'],
+        column_config=col_config,
+        use_container_width=True,
+        height=600
+    )
+
+    if st.button("✅ Update Floor Sheet"):
+        edited_grid.to_csv(GRID_FILE, index=False)
+        st.session_state['grid_df'] = edited_grid
+        st.success("Floor Data Updated!")
+
+# --- TAB 3: COSTING & REPORT ---
+with tab3:
+    st.header("Challan & Costing Summary")
+
+    # --- THE CALCULATION ENGINE ---
+    # 1. Merge Workers with Grid to get Wages
+    grid = st.session_state['grid_df']
+    workers = st.session_state['workers_df']
+    styles = st.session_state['styles_df']
+
+    # Create a cost summary dictionary
+    cost_summary = {style: 0 for style in styles['Style Name']}
+    
+    # Iterate through the grid to calculate costs
+    # Logic: If Nazim (Wage 500) works 1 hour on Style A, Cost = 500 / 8 = 62.5
+    for index, row in grid.iterrows():
+        worker_name = row['Worker Name']
+        # Find worker wage
+        worker_wage = workers.loc[workers['Worker Name'] == worker_name, 'Daily Wage'].values
+        if len(worker_wage) > 0:
+            hourly_rate = worker_wage[0] / 8  # Assuming 8 hour shift
+            
+            # Check each hour slot
+            for slot in time_slots:
+                assigned_style = row[slot]
+                if assigned_style and assigned_style in cost_summary:
+                    cost_summary[assigned_style] += hourly_rate
+
+    # --- DISPLAY REPORT ---
+    # Allow user to select a style to view detailed costing (like your Image 3)
+    selected_style = st.selectbox("Select Style to View Costing", styles['Style Name'])
+    
+    if selected_style:
+        style_data = styles[styles['Style Name'] == selected_style].iloc[0]
+        calculated_labor_cost = cost_summary[selected_style]
+        
+        st.divider()
+        c1, c2 = st.columns([1, 2])
+        
+        with c1:
+            st.subheader(f"Challan: {style_data['Challan']}")
+            st.metric("Issued Qty", style_data['Issue Qty'])
+            
+            # Inputs for extra costs (from your Image 3)
+            consumable = st.number_input("Consumable Expenses", value=100)
+            staff_exp = st.number_input("Staff Expenses", value=3000)
+            received_qty = st.number_input("Received Qty", value=100)
+            
+            st.write(f"**Remaining Qty:** {style_data['Issue Qty'] - received_qty}")
+
+        with c2:
+            st.subheader("Cost Breakdown")
+            
+            # Creating the Dataframe exactly like your Excel Image 3
+            cost_df = pd.DataFrame([
+                {"Category": "Employee Expenses (Calculated)", "Amount": round(calculated_labor_cost, 2)},
+                {"Category": "Referment/Other", "Amount": 50}, # Placeholder
+                {"Category": "Consumables", "Amount": consumable},
+                {"Category": "Staff Expense", "Amount": staff_exp},
+                {"Category": "TOTAL COST", "Amount": round(calculated_labor_cost + 50 + consumable + staff_exp, 2)}
+            ])
+            
+            st.table(cost_df)
+            
+            if received_qty > 0:
+                per_pc_cost = (calculated_labor_cost + 50 + consumable + staff_exp) / received_qty
+                st.success(f"💰 Final Cost Per Piece: ₹{per_pc_cost:.2f}")
