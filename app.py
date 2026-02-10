@@ -1,83 +1,102 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import os
 from datetime import datetime
 
-# --- 1. SETUP & SESSION STATE ---
-st.set_page_config(page_title="Stitching Management System", layout="wide")
+# --- SETTINGS & PERSISTENCE ---
+DB_FILE = "ultra_max_stitching_db.csv"
 
-# This keeps your data stored while the app is running
-if 'work_data' not in st.session_state:
-    st.session_state['work_data'] = pd.DataFrame(columns=[
-        'Date', 'Employee Name', 'Style', 'Challan Number', 
-        'Hours Worked', 'Actual Cost', 'Master Cost'
+def load_data():
+    if os.path.exists(DB_FILE):
+        return pd.read_csv(DB_FILE)
+    return pd.DataFrame(columns=[
+        'Date', 'Employee', 'Style', 'Hours', 'Weight', 
+        'Actual Cost', 'Master Cost', 'Pieces Done', 'Efficiency %'
     ])
 
-# --- 2. SIDEBAR NAVIGATION ---
-st.sidebar.title("🧵 Stitching Dept.")
-page = st.sidebar.radio("Navigation", ["Daily Work Entry", "Cost Reconciliation"])
+if 'work_data' not in st.session_state:
+    st.session_state['work_data'] = load_data()
 
-# --- 3. PAGE: DAILY WORK ENTRY ---
-if page == "Daily Work Entry":
-    st.title("Employee Work Entry")
-    st.write("Fill in the details below to record daily production.")
+st.set_page_config(page_title="Ultra Max Stitching Pro", layout="wide")
+
+# --- SIDEBAR: MASTER SETTINGS ---
+st.sidebar.title("🛠️ Control Center")
+menu = st.sidebar.selectbox("Go to", ["Live Production Entry", "Ultra Analytics", "Worker Payroll"])
+
+# Preset Rates (You can change these in code or make them settings)
+STYLE_TARGETS = {"1065YK": 10, "TSHIRT": 25, "DENIM": 8} # Pieces per hour
+
+# --- PAGE 1: DIGITAL ENTRY ---
+if menu == "Live Production Entry":
+    st.title("🚀 Live Production Input")
     
-    with st.form(key="entry_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Employee Name")
-            style = st.text_input("Style (e.g., 1065YK)")
-            challan = st.text_input("Challan Number")
-        with col2:
-            hours = st.number_input("Hours Worked", min_value=0.0, step=0.5)
-            actual_cost = st.number_input("Actual Labor Cost (₹)", min_value=0)
-            master_cost = st.number_input("Master/Budget Cost (₹)", min_value=0)
+    with st.form("entry_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            emp = st.text_input("Worker Name")
+            style = st.selectbox("Style Code", list(STYLE_TARGETS.keys()))
+        with c2:
+            hrs = st.number_input("Hours Worked", min_value=0.1, value=8.0)
+            pieces = st.number_input("Total Pieces Produced", min_value=1)
+        with c3:
+            act_cost = st.number_input("Labor Paid (₹)", min_value=0)
+            mas_cost = st.number_input("Master Budget (₹)", min_value=0)
+
+        if st.form_submit_button("Submit to Cloud"):
+            # --- ULTRA MAX CALCULATIONS ---
+            # 1. Efficiency Calculation
+            target_for_hrs = STYLE_TARGETS[style] * hrs
+            efficiency = (pieces / target_for_hrs) * 100
             
-        submitted = st.form_submit_button("Add Entry")
+            new_entry = {
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "Employee": emp,
+                "Style": style,
+                "Hours": hrs,
+                "Pieces Done": pieces,
+                "Actual Cost": act_cost,
+                "Master Cost": mas_cost,
+                "Efficiency %": round(efficiency, 2)
+            }
+            
+            # Save to File
+            df = pd.concat([st.session_state['work_data'], pd.DataFrame([new_entry])], ignore_index=True)
+            df.to_csv(DB_FILE, index=False)
+            st.session_state['work_data'] = df
+            st.success(f"Record Saved! Worker Efficiency: {efficiency:.1f}%")
 
-        if submitted:
-            if not name or not style:
-                st.error("Please provide at least Name and Style.")
-            else:
-                new_row = {
-                    "Date": datetime.today().strftime('%Y-%m-%d'),
-                    "Employee Name": name,
-                    "Style": style.upper(),
-                    "Challan Number": challan,
-                    "Hours Worked": hours,
-                    "Actual Cost": actual_cost,
-                    "Master Cost": master_cost
-                }
-                # Add the new row to our database
-                st.session_state['work_data'] = pd.concat([st.session_state['work_data'], pd.DataFrame([new_row])], ignore_index=True)
-                st.success(f"Record for {name} saved successfully!")
+    st.subheader("Today's Production Log")
+    st.dataframe(st.session_state['work_data'].tail(10), use_container_width=True)
 
-    st.subheader("Recent Entries")
-    st.dataframe(st.session_state['work_data'], use_container_width=True)
-
-# --- 4. PAGE: COST RECONCILIATION ---
-elif page == "Cost Reconciliation":
-    st.title("📊 Costing & Reconciliation")
+# --- PAGE 2: ULTRA ANALYTICS ---
+elif menu == "Ultra Analytics":
+    st.title("📊 Ultra Max Dashboard")
     df = st.session_state['work_data']
-
-    if df.empty:
-        st.info("No data available. Please enter some records in the 'Daily Work Entry' page first.")
-    else:
-        # Calculate Variance
-        df['Variance'] = df['Master Cost'] - df['Actual Cost']
-        
-        # Summary Metrics
+    
+    if not df.empty:
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Actual Cost", f"₹{df['Actual Cost'].sum()}")
-        m2.metric("Total Master Cost", f"₹{df['Master Cost'].sum()}")
-        m3.metric("Net Profit/Loss", f"₹{df['Variance'].sum()}")
+        m1.metric("Total Pieces Produced", int(df['Pieces Done'].sum()))
+        m2.metric("Avg Department Efficiency", f"{df['Efficiency %'].mean():.1f}%")
+        
+        # Financial Health
+        total_variance = df['Master Cost'].sum() - df['Actual Cost'].sum()
+        m3.metric("Net Savings/Loss", f"₹{total_variance}", delta=int(total_variance))
 
-        # Dynamic Comparison Graph
-        st.subheader("Actual vs Master Cost Comparison")
-        fig = px.bar(df, x="Style", y=["Actual Cost", "Master Cost"], 
-                     barmode="group", color_discrete_sequence=["#EF553B", "#636EFA"])
+        # Efficiency Chart
+        import plotly.express as px
+        fig = px.line(df, x="Date", y="Efficiency %", color="Employee", title="Worker Performance Over Time")
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Wait for data entry to see analytics.")
 
-        # Download Option
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Report (CSV)", data=csv, file_name="stitching_report.csv", mime="text/csv")
+# --- PAGE 3: WORKER PAYROLL ---
+elif menu == "Worker Payroll":
+    st.title("💰 Worker Salary Summary")
+    df = st.session_state['work_data']
+    if not df.empty:
+        salary_sheet = df.groupby("Employee").agg({
+            'Actual Cost': 'sum',
+            'Pieces Done': 'sum',
+            'Hours': 'sum'
+        }).reset_index()
+        st.table(salary_sheet)
