@@ -24,6 +24,7 @@ if 'init' not in st.session_state:
         pd.DataFrame({"Style": ["1006YKBLUE"], "Challan": ["10003"], "Issued Qty": [200]})
     )
     
+    # Time slots for floor sheet
     time_slots = [f"{h} to {h+1}" for h in range(9, 18)]
     grid_init = pd.DataFrame({"Worker Name": st.session_state['workers']['Name']})
     for slot in time_slots:
@@ -77,7 +78,7 @@ with tab2:
     st.header("Daily Matrix")
     st.caption("Edit the worker assignments for each time slot directly below:")
 
-    # Simple editable grid without SelectColumn
+    # Editable grid without SelectColumn
     edited_grid = st.data_editor(
         st.session_state['grid'],
         use_container_width=True,
@@ -103,4 +104,20 @@ with tab3:
         if uploaded_workers:
             df_up = pd.read_excel(uploaded_workers) if uploaded_workers.name.endswith('.xlsx') else pd.read_csv(uploaded_workers)
             if st.button("Confirm Worker Import"):
-                st.
+                st.session_state['workers'] = df_up
+                df_up.to_csv(FILES["workers"], index=False)
+                st.success(f"Imported {len(df_up)} workers!")
+
+    with up_col2:
+        uploaded_styles = st.file_uploader("Upload Style Master (Excel/CSV)", type=['csv', 'xlsx'])
+        if uploaded_styles:
+            df_up_s = pd.read_excel(uploaded_styles) if uploaded_styles.name.endswith('.xlsx') else pd.read_csv(uploaded_styles)
+            if st.button("Confirm Style Import"):
+                st.session_state['styles'] = df_up_s
+                df_up_s.to_csv(FILES["styles"], index=False)
+                st.success("Styles updated!")
+
+    st.divider()
+    st.write("Current Manual Setup:")
+    st.data_editor(st.session_state['workers'], num_rows="dynamic", key="manual_worker")
+    st.data_editor(st.session_state['styles'], num_rows="dynamic", key="manual_style")
