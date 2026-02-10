@@ -1,176 +1,230 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import os
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Ultra Max Factory Manager", layout="wide")
+# --- APP CONFIGURATION ---
+st.set_page_config(page_title="ProFactory ERP System", layout="wide", page_icon="🏭")
 
-# --- FILE STORAGE ---
-WORKER_FILE = "db_workers.csv"
-STYLE_FILE = "db_styles.csv"
-GRID_FILE = "db_production_grid.csv"
+# --- FILE CONSTANTS ---
+FILES = {
+    "workers": "db_workers.csv",
+    "styles": "db_styles.csv",
+    "grid": "db_floor_sheet.csv",
+    "config": "db_config.csv"
+}
 
-# --- HELPER FUNCTIONS ---
-def load_csv(file, default_data):
-    if os.path.exists(file):
-        return pd.read_csv(file)
+# --- HELPER: LOAD/SAVE DATA ---
+def load_data(key, default_data):
+    if os.path.exists(FILES[key]):
+        return pd.read_csv(FILES[key])
     return pd.DataFrame(default_data)
 
-# --- 1. INITIALIZE DATA ---
-# Workers: Name and Daily Wage (from your screenshot)
-if 'workers_df' not in st.session_state:
-    default_workers = {
-        "Worker Name": ["Nazim", "Rahul", "Tanu", "Raju", "Rita"] + [f"Worker {i}" for i in range(6, 21)],
-        "Daily Wage": [500, 400, 600, 200, 300] + [350] * 15
-    }
-    st.session_state['workers_df'] = load_csv(WORKER_FILE, default_workers)
+def save_data(key, df):
+    df.to_csv(FILES[key], index=False)
+    st.toast(f"✅ {key.capitalize()} Saved Successfully!", icon="💾")
 
-# Styles: Name, Challan, and Issue Qty (from your screenshot)
-if 'styles_df' not in st.session_state:
-    default_styles = {
-        "Style Name": ["1006YKBLUE", "1005YKBLACK", "1888WINE"],
-        "Challan": ["10003", "10004", "10005"],
-        "Issue Qty": [200, 150, 300]
-    }
-    st.session_state['styles_df'] = load_csv(STYLE_FILE, default_styles)
+# --- INITIALIZATION (SESSION STATE) ---
+if 'init' not in st.session_state:
+    # 1. Workers Data (Name, Daily Wage, Role)
+    st.session_state['workers'] = load_data("workers", {
+        "Worker ID": ["W001", "W002", "W003", "W004", "W005"],
+        "Name": ["Nazim", "Rahul", "Tanu", "Raju", "Rita"],
+        "Daily Wage": [500, 400, 600, 200, 300],
+        "Role": ["Stitcher", "Helper", "Master", "Helper", "Stitcher"]
+    })
 
-# Production Grid: Rows = Workers, Cols = Time Slots
-time_slots = ["9-10", "10-11", "11-12", "12-13", "13-14", "14-15", "15-16", "16-17", "17-18"]
+    # 2. Styles Data (Budgeting)
+    st.session_state['styles'] = load_data("styles", {
+        "Style Code": ["1006YKBLUE", "1005YKBLACK", "1888WINE"],
+        "Challan No": ["10003", "10004", "10005"],
+        "Order Qty": [200, 150, 300],
+        "Target Cost/Pc": [150.0, 120.0, 180.0] # Budget per piece
+    })
 
-if 'grid_df' not in st.session_state:
-    # Create the grid based on current workers
-    current_workers = st.session_state['workers_df']['Worker Name'].tolist()
+    # 3. Floor Sheet (The Grid)
+    time_slots = [f"{h:02d}:00-{h+1:02d}:00" for h in range(9, 18)] # 09:00-10:00...
     
-    # Load existing grid or create new
-    if os.path.exists(GRID_FILE):
-        saved_grid = pd.read_csv(GRID_FILE)
-        # Ensure rows match current worker list (logic to merge if needed)
-        st.session_state['grid_df'] = saved_grid
+    # Load grid or create blank based on active workers
+    if os.path.exists(FILES["grid"]):
+        st.session_state['grid'] = pd.read_csv(FILES["grid"])
     else:
-        # Create blank grid
-        blank_data = {"Worker Name": current_workers}
+        # Initialize blank grid
+        df_grid = st.DataFrame({"Worker Name": st.session_state['workers']['Name']})
         for slot in time_slots:
-            blank_data[slot] = None # Empty initially
-        st.session_state['grid_df'] = pd.DataFrame(blank_data)
+            df_grid[slot] = None
+        st.session_state['grid'] = df_grid
 
-# --- TABS LAYOUT ---
-tab1, tab2, tab3 = st.tabs(["⚙️ Setup (Workers/Styles)", "🏭 Floor Sheet (Excel Grid)", "💰 Costing & Challan"])
-
-# --- TAB 1: SETUP ---
-with tab1:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Worker Master List")
-        edited_workers = st.data_editor(st.session_state['workers_df'], num_rows="dynamic", use_container_width=True)
-        if st.button("💾 Save Workers"):
-            edited_workers.to_csv(WORKER_FILE, index=False)
-            st.session_state['workers_df'] = edited_workers
-            st.rerun()
-
-    with col2:
-        st.subheader("Style & Challan Master")
-        edited_styles = st.data_editor(st.session_state['styles_df'], num_rows="dynamic", use_container_width=True)
-        if st.button("💾 Save Styles"):
-            edited_styles.to_csv(STYLE_FILE, index=False)
-            st.session_state['styles_df'] = edited_styles
-            st.rerun()
-
-# --- TAB 2: FLOOR SHEET (THE GRID) ---
-with tab2:
-    st.header("Daily Production Grid")
-    st.info("Select the **Style** for each hour. The app will calculate the cost automatically based on the worker's wage.")
-
-    # Prepare Dropdown Options
-    style_list = st.session_state['styles_df']['Style Name'].tolist()
+    # 4. Global Settings (Overheads)
+    st.session_state['config'] = load_data("config", {
+        "Setting": ["Overhead % (Rent/Elec)", "Work Hours/Day"],
+        "Value": [15.0, 9.0] # 15% extra cost, 9 hour shift
+    })
     
-    # Configure Columns
-    col_config = {
-        "Worker Name": st.column_config.TextColumn("Worker", disabled=True)
-    }
-    for slot in time_slots:
-        col_config[slot] = st.column_config.SelectColumn(
-            label=f"{slot} (Style)",
-            options=style_list,
-            required=False
-        )
+    st.session_state['init'] = True
 
-    # Show Editable Grid
-    edited_grid = st.data_editor(
-        st.session_state['grid_df'],
-        column_config=col_config,
-        use_container_width=True,
-        height=600
-    )
+# --- SIDEBAR NAVIGATION ---
+st.sidebar.title("🏭 ProFactory ERP")
+menu = st.sidebar.radio("Navigate", ["📊 Executive Dashboard", "🗓️ Floor Sheet (Production)", "⚙️ Master Setup"])
 
-    if st.button("✅ Update Floor Sheet"):
-        edited_grid.to_csv(GRID_FILE, index=False)
-        st.session_state['grid_df'] = edited_grid
-        st.success("Floor Data Updated!")
+# --- PAGE 1: EXECUTIVE DASHBOARD (THE PROMOTION MAKER) ---
+if menu == "📊 Executive Dashboard":
+    st.title("💰 Costing & Profitability Center")
+    st.markdown("Real-time analysis of production costs vs. budget.")
 
-# --- TAB 3: COSTING & REPORT ---
-with tab3:
-    st.header("Challan & Costing Summary")
-
-    # --- THE CALCULATION ENGINE ---
-    # 1. Merge Workers with Grid to get Wages
-    grid = st.session_state['grid_df']
-    workers = st.session_state['workers_df']
-    styles = st.session_state['styles_df']
-
-    # Create a cost summary dictionary
-    cost_summary = {style: 0 for style in styles['Style Name']}
+    # --- CALCULATION ENGINE ---
+    grid = st.session_state['grid']
+    workers = st.session_state['workers']
+    styles = st.session_state['styles']
+    config = st.session_state['config']
     
-    # Iterate through the grid to calculate costs
-    # Logic: If Nazim (Wage 500) works 1 hour on Style A, Cost = 500 / 8 = 62.5
-    for index, row in grid.iterrows():
+    overhead_pct = float(config.loc[config['Setting']=="Overhead % (Rent/Elec)", "Value"].values[0])
+    work_hours = float(config.loc[config['Setting']=="Work Hours/Day", "Value"].values[0])
+
+    # 1. Calculate Cost Per Style
+    style_costs = {code: 0.0 for code in styles['Style Code']}
+    
+    time_cols = [c for c in grid.columns if "-" in c] # Get time columns
+    
+    for _, row in grid.iterrows():
         worker_name = row['Worker Name']
         # Find worker wage
-        worker_wage = workers.loc[workers['Worker Name'] == worker_name, 'Daily Wage'].values
-        if len(worker_wage) > 0:
-            hourly_rate = worker_wage[0] / 8  # Assuming 8 hour shift
+        w_row = workers[workers['Name'] == worker_name]
+        if not w_row.empty:
+            hourly_rate = w_row['Daily Wage'].values[0] / work_hours
             
-            # Check each hour slot
-            for slot in time_slots:
-                assigned_style = row[slot]
-                if assigned_style and assigned_style in cost_summary:
-                    cost_summary[assigned_style] += hourly_rate
+            for col in time_cols:
+                assigned_style = row[col]
+                if assigned_style and assigned_style in style_costs:
+                    style_costs[assigned_style] += hourly_rate
 
-    # --- DISPLAY REPORT ---
-    # Allow user to select a style to view detailed costing (like your Image 3)
-    selected_style = st.selectbox("Select Style to View Costing", styles['Style Name'])
+    # 2. Build Report Dataframe
+    report_data = []
+    for _, s_row in styles.iterrows():
+        code = s_row['Style Code']
+        direct_labor = style_costs.get(code, 0)
+        overhead_cost = direct_labor * (overhead_pct / 100)
+        total_spent = direct_labor + overhead_cost
+        
+        target_budget = s_row['Target Cost/Pc'] * s_row['Order Qty']
+        
+        # Avoid division by zero
+        actual_cost_pc = total_spent / s_row['Order Qty'] if s_row['Order Qty'] > 0 else 0
+        
+        status = "🟢 Profitable" if total_spent <= target_budget else "🔴 Over Budget"
+        
+        report_data.append({
+            "Style": code,
+            "Challan": s_row['Challan No'],
+            "Total Labor": round(direct_labor, 2),
+            "Overheads": round(overhead_cost, 2),
+            "Total Actual Cost": round(total_spent, 2),
+            "Budget Limit": round(target_budget, 2),
+            "Variance": round(target_budget - total_spent, 2),
+            "Actual Cost/Pc": round(actual_cost_pc, 2),
+            "Status": status
+        })
     
-    if selected_style:
-        style_data = styles[styles['Style Name'] == selected_style].iloc[0]
-        calculated_labor_cost = cost_summary[selected_style]
-        
-        st.divider()
-        c1, c2 = st.columns([1, 2])
-        
-        with c1:
-            st.subheader(f"Challan: {style_data['Challan']}")
-            st.metric("Issued Qty", style_data['Issue Qty'])
-            
-            # Inputs for extra costs (from your Image 3)
-            consumable = st.number_input("Consumable Expenses", value=100)
-            staff_exp = st.number_input("Staff Expenses", value=3000)
-            received_qty = st.number_input("Received Qty", value=100)
-            
-            st.write(f"**Remaining Qty:** {style_data['Issue Qty'] - received_qty}")
+    df_report = pd.DataFrame(report_data)
 
-        with c2:
-            st.subheader("Cost Breakdown")
+    # --- DISPLAY METRICS ---
+    total_spend = df_report['Total Actual Cost'].sum()
+    total_budget = df_report['Budget Limit'].sum()
+    net_profit = total_budget - total_spend
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Production Cost", f"₹{total_spend:,.0f}")
+    m2.metric("Total Budget Value", f"₹{total_budget:,.0f}")
+    m3.metric("Net Variance", f"₹{net_profit:,.0f}", delta=round(net_profit), delta_color="normal")
+    m4.metric("Active Styles", len(df_report))
+    
+    st.divider()
+
+    # --- DETAILED TABLE WITH HIGHLIGHTS ---
+    st.subheader("Style-wise Profitability")
+    
+    # Color code the table
+    def highlight_status(val):
+        color = '#ffcdd2' if val == "🔴 Over Budget" else '#c8e6c9'
+        return f'background-color: {color}'
+
+    st.dataframe(
+        df_report.style.applymap(highlight_status, subset=['Status']),
+        use_container_width=True
+    )
+
+    # --- CHARTS ---
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Cost Breakdown")
+        fig_bar = px.bar(df_report, x="Style", y=["Total Labor", "Overheads"], title="Labor vs Overhead Cost")
+        st.plotly_chart(fig_bar, use_container_width=True)
+    
+    with c2:
+        st.subheader("Budget vs Actual")
+        fig_dual = px.bar(df_report, x="Style", y=["Total Actual Cost", "Budget Limit"], barmode="group", title="Are we within budget?")
+        st.plotly_chart(fig_dual, use_container_width=True)
+
+# --- PAGE 2: FLOOR SHEET (PRODUCTION) ---
+elif menu == "🗓️ Floor Sheet (Production)":
+    st.title("🏭 Daily Production Log")
+    st.info("Assign styles to workers for each hour. Calculations are automatic.")
+
+    # Dropdown Options
+    style_opts = st.session_state['styles']['Style Code'].tolist()
+    
+    # Configure Grid
+    time_cols = [f"{h:02d}:00-{h+1:02d}:00" for h in range(9, 18)]
+    
+    col_config = {
+        "Worker Name": st.column_config.TextColumn("Employee", disabled=True)
+    }
+    # Dynamic columns for time slots
+    for slot in time_cols:
+        col_config[slot] = st.column_config.SelectColumn(
+            slot,
+            options=style_opts,
+            required=False,
+            width="small"
+        )
+
+    # The Editor
+    edited_grid = st.data_editor(
+        st.session_state['grid'],
+        column_config=col_config,
+        use_container_width=True,
+        height=600,
+        num_rows="dynamic"
+    )
+
+    if st.button("💾 Save Production Sheet", type="primary"):
+        st.session_state['grid'] = edited_grid
+        save_data("grid", edited_grid)
+
+
+# --- PAGE 3: MASTER SETUP ---
+elif menu == "⚙️ Master Setup":
+    st.title("⚙️ System Configuration")
+    
+    t1, t2, t3 = st.tabs(["👥 Workers", "👕 Styles & Budget", "🔧 General Settings"])
+    
+    with t1:
+        st.caption("Manage your employee list and daily wages.")
+        edited_workers = st.data_editor(st.session_state['workers'], num_rows="dynamic", use_container_width=True)
+        if st.button("Save Workers"):
+            st.session_state['workers'] = edited_workers
+            save_data("workers", edited_workers)
             
-            # Creating the Dataframe exactly like your Excel Image 3
-            cost_df = pd.DataFrame([
-                {"Category": "Employee Expenses (Calculated)", "Amount": round(calculated_labor_cost, 2)},
-                {"Category": "Referment/Other", "Amount": 50}, # Placeholder
-                {"Category": "Consumables", "Amount": consumable},
-                {"Category": "Staff Expense", "Amount": staff_exp},
-                {"Category": "TOTAL COST", "Amount": round(calculated_labor_cost + 50 + consumable + staff_exp, 2)}
-            ])
+    with t2:
+        st.caption("Define your styles and the TARGET cost per piece (Budget).")
+        edited_styles = st.data_editor(st.session_state['styles'], num_rows="dynamic", use_container_width=True)
+        if st.button("Save Styles"):
+            st.session_state['styles'] = edited_styles
+            save_data("styles", edited_styles)
             
-            st.table(cost_df)
-            
-            if received_qty > 0:
-                per_pc_cost = (calculated_labor_cost + 50 + consumable + staff_exp) / received_qty
-                st.success(f"💰 Final Cost Per Piece: ₹{per_pc_cost:.2f}")
+    with t3:
+        st.caption("Adjust factory overheads.")
+        edited_config = st.data_editor(st.session_state['config'], use_container_width=True)
+        if st.button("Save Config"):
+            st.session_state['config'] = edited_config
+            save_data("config", edited_config)
