@@ -1,102 +1,89 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import os
 from datetime import datetime
 
-# --- SETTINGS & PERSISTENCE ---
-DB_FILE = "ultra_max_stitching_db.csv"
+# --- 1. DATA CORE (Permanent Storage) ---
+DB_FILE = "stitching_master_db.csv"
 
 def load_data():
     if os.path.exists(DB_FILE):
         return pd.read_csv(DB_FILE)
-    return pd.DataFrame(columns=[
-        'Date', 'Employee', 'Style', 'Hours', 'Weight', 
-        'Actual Cost', 'Master Cost', 'Pieces Done', 'Efficiency %'
-    ])
+    return pd.DataFrame(columns=['Date', 'Employee', 'Style', 'Pieces', 'Actual Cost', 'Master Cost'])
 
 if 'work_data' not in st.session_state:
     st.session_state['work_data'] = load_data()
 
-st.set_page_config(page_title="Ultra Max Stitching Pro", layout="wide")
+st.set_page_config(page_title="Ultra Max Stitching Dashboard", layout="wide")
 
-# --- SIDEBAR: MASTER SETTINGS ---
-st.sidebar.title("🛠️ Control Center")
-menu = st.sidebar.selectbox("Go to", ["Live Production Entry", "Ultra Analytics", "Worker Payroll"])
+# --- 2. THE TABS (Navigation) ---
+# This creates the navigation at the top of the screen
+tab1, tab2, tab3, tab4 = st.tabs(["📝 Work Entry", "📊 Analytics", "🧵 Inventory", "⚙️ Settings"])
 
-# Preset Rates (You can change these in code or make them settings)
-STYLE_TARGETS = {"1065YK": 10, "TSHIRT": 25, "DENIM": 8} # Pieces per hour
-
-# --- PAGE 1: DIGITAL ENTRY ---
-if menu == "Live Production Entry":
-    st.title("🚀 Live Production Input")
-    
+# --- 3. TAB 1: WORK ENTRY ---
+with tab1:
+    st.header("Daily Production Entry")
     with st.form("entry_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
+        col1, col2 = st.columns(2)
+        with col1:
             emp = st.text_input("Worker Name")
-            style = st.selectbox("Style Code", list(STYLE_TARGETS.keys()))
-        with c2:
-            hrs = st.number_input("Hours Worked", min_value=0.1, value=8.0)
-            pieces = st.number_input("Total Pieces Produced", min_value=1)
-        with c3:
-            act_cost = st.number_input("Labor Paid (₹)", min_value=0)
-            mas_cost = st.number_input("Master Budget (₹)", min_value=0)
-
-        if st.form_submit_button("Submit to Cloud"):
-            # --- ULTRA MAX CALCULATIONS ---
-            # 1. Efficiency Calculation
-            target_for_hrs = STYLE_TARGETS[style] * hrs
-            efficiency = (pieces / target_for_hrs) * 100
-            
-            new_entry = {
-                "Date": datetime.now().strftime("%Y-%m-%d"),
-                "Employee": emp,
-                "Style": style,
-                "Hours": hrs,
-                "Pieces Done": pieces,
-                "Actual Cost": act_cost,
-                "Master Cost": mas_cost,
-                "Efficiency %": round(efficiency, 2)
-            }
-            
-            # Save to File
-            df = pd.concat([st.session_state['work_data'], pd.DataFrame([new_entry])], ignore_index=True)
-            df.to_csv(DB_FILE, index=False)
-            st.session_state['work_data'] = df
-            st.success(f"Record Saved! Worker Efficiency: {efficiency:.1f}%")
-
-    st.subheader("Today's Production Log")
-    st.dataframe(st.session_state['work_data'].tail(10), use_container_width=True)
-
-# --- PAGE 2: ULTRA ANALYTICS ---
-elif menu == "Ultra Analytics":
-    st.title("📊 Ultra Max Dashboard")
-    df = st.session_state['work_data']
-    
-    if not df.empty:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Pieces Produced", int(df['Pieces Done'].sum()))
-        m2.metric("Avg Department Efficiency", f"{df['Efficiency %'].mean():.1f}%")
+            style = st.text_input("Style Number")
+        with col2:
+            pieces = st.number_input("Pieces Done", min_value=1)
+            cost = st.number_input("Labor Cost (₹)", min_value=0)
+            m_cost = st.number_input("Master Budget (₹)", min_value=0)
         
-        # Financial Health
-        total_variance = df['Master Cost'].sum() - df['Actual Cost'].sum()
-        m3.metric("Net Savings/Loss", f"₹{total_variance}", delta=int(total_variance))
+        if st.form_submit_button("Save to Database"):
+            new_row = pd.DataFrame([{
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "Employee": emp, "Style": style, "Pieces": pieces, 
+                "Actual Cost": cost, "Master Cost": m_cost
+            }])
+            updated_df = pd.concat([st.session_state['work_data'], new_row], ignore_index=True)
+            updated_df.to_csv(DB_FILE, index=False)
+            st.session_state['work_data'] = updated_df
+            st.success("Entry Saved Successfully!")
 
-        # Efficiency Chart
-        import plotly.express as px
-        fig = px.line(df, x="Date", y="Efficiency %", color="Employee", title="Worker Performance Over Time")
+    st.subheader("Recent Logs")
+    st.dataframe(st.session_state['work_data'].tail(5), use_container_width=True)
+
+# --- 4. TAB 2: ANALYTICS ---
+with tab2:
+    st.header("Financial & Production Dashboard")
+    df = st.session_state['work_data']
+    if not df.empty:
+        # High-level Metrics
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Pieces", int(df['Pieces'].sum()))
+        m2.metric("Total Spend", f"₹{df['Actual Cost'].sum()}")
+        variance = df['Master Cost'].sum() - df['Actual Cost'].sum()
+        m3.metric("Profit/Loss", f"₹{variance}", delta=int(variance))
+
+        # Efficiency Graph
+        fig = px.bar(df, x="Style", y="Pieces", color="Employee", title="Pieces by Style")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Wait for data entry to see analytics.")
+        st.info("No data to show yet.")
 
-# --- PAGE 3: WORKER PAYROLL ---
-elif menu == "Worker Payroll":
-    st.title("💰 Worker Salary Summary")
-    df = st.session_state['work_data']
-    if not df.empty:
-        salary_sheet = df.groupby("Employee").agg({
-            'Actual Cost': 'sum',
-            'Pieces Done': 'sum',
-            'Hours': 'sum'
-        }).reset_index()
-        st.table(salary_sheet)
+# --- 5. TAB 3: INVENTORY ---
+with tab3:
+    st.header("Fabric & Material Stock")
+    st.write("Current Stock Levels (Demo)")
+    # You can expand this later with a new CSV for materials
+    inventory_data = pd.DataFrame({
+        "Material": ["Denim Fabric", "Cotton Thread", "Zippers", "Buttons"],
+        "Stock": ["500 Meters", "200 Rolls", "1500 Pcs", "5000 Pcs"],
+        "Status": ["Good", "Low", "Good", "Good"]
+    })
+    st.table(inventory_data)
+
+# --- 6. TAB 4: SETTINGS ---
+with tab4:
+    st.header("System Settings")
+    if st.button("🗑️ Clear All Data (Permanent)"):
+        if os.path.exists(DB_FILE):
+            os.remove(DB_FILE)
+        st.session_state['work_data'] = pd.DataFrame(columns=['Date', 'Employee', 'Style', 'Pieces', 'Actual Cost', 'Master Cost'])
+        st.warning("Database Deleted!")
+        st.rerun()
