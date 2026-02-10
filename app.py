@@ -6,7 +6,7 @@ import os
 # --- 1. SETTINGS & TOOL SETUP ---
 st.set_page_config(page_title="Ultra-Max Production ERP", layout="wide")
 
-# File paths for persistence
+# File paths
 FILES = {"workers": "workers.csv", "styles": "styles.csv", "grid": "floor_sheet.csv"}
 
 def load_data(file_key, default_df):
@@ -35,7 +35,7 @@ if 'init' not in st.session_state:
         })
     )
 
-    # Time slots for floor sheet
+    # Time slots
     time_slots = [f"{h} to {h+1}" for h in range(9, 18)]
 
     # Floor grid
@@ -49,7 +49,7 @@ if 'init' not in st.session_state:
 
     st.session_state['init'] = True
 
-# --- 3. THE INTERFACE (Tabs) ---
+# --- 3. TABS ---
 tab1, tab2, tab3 = st.tabs(["📊 Executive Dashboard", "🕒 Hourly Floor Sheet", "⚙️ Setup Master"])
 
 # --- TAB 1: EXECUTIVE DASHBOARD ---
@@ -63,24 +63,24 @@ with tab1:
     # Map wages
     wage_map = dict(zip(workers['Name'], workers['Daily Wage']))
 
-    # Calculate total labor cost per style
+    # Calculate labor cost per style
     style_costs = {s: 0 for s in styles['Style'].tolist()}
     time_cols = [c for c in grid.columns if " to " in c]
 
     for _, row in grid.iterrows():
         daily_wage = wage_map.get(row['Worker Name'], 0)
-        hourly_rate = daily_wage / 8  # 8-hour shift
+        hourly_rate = daily_wage / 8
         for col in time_cols:
             style_assigned = row[col]
             if pd.notna(style_assigned) and style_assigned in style_costs:
                 style_costs[style_assigned] += hourly_rate
 
-    # Summary Table
+    # Summary table
     summary_data = []
     for _, s_row in styles.iterrows():
         s_name = s_row['Style']
         labor = style_costs.get(s_name, 0)
-        total_cost = labor + 100 + 3000  # Overheads
+        total_cost = labor + 100 + 3000  # Example overheads
 
         summary_data.append({
             "Style": s_name,
@@ -93,7 +93,7 @@ with tab1:
     summary_df = pd.DataFrame(summary_data)
     st.dataframe(summary_df, use_container_width=True)
 
-    # Visual chart
+    # Bar chart
     fig = px.bar(summary_df, x="Style", y="Total Cost (Inc. Overheads)", title="Budget Consumption by Style")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -102,16 +102,9 @@ with tab2:
     st.header("Daily Production Matrix")
     st.caption("Assign Styles to workers for each hour slot below.")
 
-    style_options = st.session_state['styles']['Style'].tolist()
-
-    # Configure columns for st.data_editor
-    grid_config = {"Worker Name": st.column_config.TextColumn("Worker", disabled=True)}
-    for col in time_cols:
-        grid_config[col] = st.column_config.SelectColumn(col, options=style_options, width="small")
-
+    # Simple editable grid (dropdowns not forced, user can type style name)
     edited_grid = st.data_editor(
         st.session_state['grid'],
-        column_config=grid_config,
         use_container_width=True,
         num_rows="dynamic"
     )
