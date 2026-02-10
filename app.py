@@ -15,8 +15,14 @@ def load_data(file_key, default_df):
 
 # --- 2. DATA INITIALIZATION ---
 if 'init' not in st.session_state:
-    st.session_state['workers'] = load_data("workers", pd.DataFrame({"Name": ["Nazim"], "Daily Wage": [500]}))
-    st.session_state['styles'] = load_data("styles", pd.DataFrame({"Style": ["1006YKBLUE"], "Challan": ["10003"], "Issued Qty": [200]}))
+    st.session_state['workers'] = load_data(
+        "workers", 
+        pd.DataFrame({"Name": ["Nazim"], "Daily Wage": [500]})
+    )
+    st.session_state['styles'] = load_data(
+        "styles", 
+        pd.DataFrame({"Style": ["1006YKBLUE"], "Challan": ["10003"], "Issued Qty": [200]})
+    )
     
     time_slots = [f"{h} to {h+1}" for h in range(9, 18)]
     grid_init = pd.DataFrame({"Worker Name": st.session_state['workers']['Name']})
@@ -32,17 +38,17 @@ tab1, tab2, tab3 = st.tabs(["📊 Executive Analysis", "🕒 Live Floor Sheet", 
 with tab1:
     st.title("💰 Production & Costing Summary")
     
-    # Logic to calculate costs (as developed previously)
     workers = st.session_state['workers']
     grid = st.session_state['grid']
     wage_map = dict(zip(workers['Name'], workers['Daily Wage']))
+    
     style_costs = {s: 0 for s in st.session_state['styles']['Style'].tolist()}
     time_cols = [c for c in grid.columns if " to " in c]
 
     for _, row in grid.iterrows():
         hourly_rate = wage_map.get(row['Worker Name'], 0) / 8
         for col in time_cols:
-            if row[col] in style_costs:
+            if pd.notna(row[col]) and row[col] in style_costs:
                 style_costs[row[col]] += hourly_rate
 
     summary_df = pd.DataFrame([
@@ -52,7 +58,7 @@ with tab1:
 
     st.dataframe(summary_df, use_container_width=True)
 
-    # --- NEW: EXPORT SECTION ---
+    # --- EXPORT SECTION ---
     st.subheader("📤 Export for Management")
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -62,59 +68,39 @@ with tab1:
     st.download_button(
         label="📥 Download Full Excel Report",
         data=buffer.getvalue(),
-        file_name=f"Factory_Report_{st.session_state['init']}.xlsx",
+        file_name=f"Factory_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # --- TAB 2: LIVE FLOOR SHEET ---
 with tab2:
     st.header("Daily Matrix")
-    # Configuration for SelectColumn as requested in previous error fix
-    style_list = st.session_state['styles']['Style'].tolist()
-    grid_config = {"Worker Name": st.column_config.TextColumn("Worker", disabled=True)}
-    for col in time_cols:
-        grid_config[col] = st.column_config.SelectColumn(col, options=style_list)
+    st.caption("Edit the worker assignments for each time slot directly below:")
 
-    edited_grid = st.data_editor(st.session_state['grid'], column_config=grid_config, use_container_width=True)
+    # Simple editable grid without SelectColumn
+    edited_grid = st.data_editor(
+        st.session_state['grid'],
+        use_container_width=True,
+        num_rows="dynamic"
+    )
     
     if st.button("💾 Save Matrix"):
         st.session_state['grid'] = edited_grid
         edited_grid.to_csv(FILES["grid"], index=False)
-        st.success("Saved!")
+        st.success("Matrix saved successfully!")
 
 # --- TAB 3: SETUP & DATA BRIDGE (Upload Function) ---
 with tab3:
     st.title("🛠️ System Administration")
     
-    # --- NEW: UPLOAD SECTION ---
     st.subheader("📥 Data Bridge (Upload Excel/CSV)")
-    st.markdown("Upload your existing Excel files here to bulk-update your Worker or Style lists.")
+    st.markdown("Upload Excel/CSV files to bulk-update your Worker or Style lists.")
     
     up_col1, up_col2 = st.columns(2)
     
     with up_col1:
         uploaded_workers = st.file_uploader("Upload Worker List (Excel/CSV)", type=['csv', 'xlsx'])
         if uploaded_workers:
-            if uploaded_workers.name.endswith('.csv'):
-                df_up = pd.read_csv(uploaded_workers)
-            else:
-                df_up = pd.read_excel(uploaded_workers)
-            
+            df_up = pd.read_excel(uploaded_workers) if uploaded_workers.name.endswith('.xlsx') else pd.read_csv(uploaded_workers)
             if st.button("Confirm Worker Import"):
-                st.session_state['workers'] = df_up
-                df_up.to_csv(FILES["workers"], index=False)
-                st.success(f"Imported {len(df_up)} workers!")
-
-    with up_col2:
-        uploaded_styles = st.file_uploader("Upload Style Master (Excel/CSV)", type=['csv', 'xlsx'])
-        if uploaded_styles:
-            df_up_s = pd.read_excel(uploaded_styles) if uploaded_styles.name.endswith('.xlsx') else pd.read_csv(uploaded_styles)
-            if st.button("Confirm Style Import"):
-                st.session_state['styles'] = df_up_s
-                df_up_s.to_csv(FILES["styles"], index=False)
-                st.success("Styles Updated!")
-
-    st.divider()
-    st.write("Current Manual Setup:")
-    # Manual Data Editors (Existing functionality)
-    st.data_editor(st.session_state['workers'], num_rows="dynamic", key="manual_worker")
+                st.
