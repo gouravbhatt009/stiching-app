@@ -1,96 +1,80 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Stitching Costing Analytics", layout="wide")
-
-# --- CUSTOM CSS FOR ATTRACTION ---
+# --- 1. CSS STYLING FIX (Addressing your Line 9 Error) ---
+# Changed 'unsafe_base64=True' to 'unsafe_allow_html=True'
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    </style>
-    """, unsafe_base64=True)
-
-# --- MOCK DATA GENERATION (Replace with your Excel upload logic later) ---
-def load_data():
-    employees = pd.DataFrame({
-        'Employee': ['John D.', 'Sarah K.', 'Ahmed V.', 'Maria L.'],
-        'Hourly_Rate': [15.0, 18.0, 14.5, 16.0],
-        'Style_Assigned': ['SKU-001', 'SKU-002', 'SKU-001', 'SKU-003']
-    })
-    
-    production = pd.DataFrame({
-        'Date': pd.date_range(start='2024-01-01', periods=10, freq='D'),
-        'SKU': ['SKU-001', 'SKU-002', 'SKU-001', 'SKU-003', 'SKU-001', 'SKU-002', 'SKU-003', 'SKU-001', 'SKU-001', 'SKU-002'],
-        'Actual_Units': [50, 40, 55, 30, 48, 42, 35, 60, 52, 38],
-        'Target_Units': [60, 45, 60, 35, 60, 45, 35, 60, 60, 45],
-        'Hours_Worked': [8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
-    })
-    
-    bom = {
-        'SKU-001': ['Front Panel Stitching', 'Back Panel Attachment', 'Sleeve Hemming', 'Button Hole'],
-        'SKU-002': ['Collar Prep', 'Cuff Stitching', 'Main Body Assembly', 'Final Inspection'],
-        'SKU-003': ['Pocket Attachment', 'Side Seam', 'Elastic Waistband', 'Overlock']
+    .main {
+        background-color: #f5f5f5;
     }
-    return employees, production, bom
+    .stButton>button {
+        width: 100%;
+        border-radius: 5px;
+        height: 3em;
+        background-color: #007bff;
+        color: white;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-emp_df, prod_df, bom_data = load_data()
+st.title("🧵 Professional Data Stitching App")
+st.write("Upload your files to merge and process them safely.")
 
-# --- SIDEBAR ---
-st.sidebar.title("🧵 Factory Control")
-menu = st.sidebar.radio("Dashboard Modules", ["Performance Overview", "Cost Variance Analysis", "Style BOM (Process)", "Employee Directory"])
+# --- 2. FILE UPLOADER ---
+uploaded_files = st.file_uploader("Choose CSV or Excel files", type=['csv', 'xlsx'], accept_multiple_files=True)
 
-# --- MODULE 1: PERFORMANCE OVERVIEW ---
-if menu == "Performance Overview":
-    st.title("📈 Production Productivity")
+if uploaded_files:
+    dfs = []
+    for file in uploaded_files:
+        if file.name.endswith('.csv'):
+            dfs.append(pd.read_csv(file))
+        else:
+            dfs.append(pd.read_excel(file))
     
-    # KPIs
-    total_units = prod_df['Actual_Units'].sum()
-    avg_efficiency = (prod_df['Actual_Units'].sum() / prod_df['Target_Units'].sum()) * 100
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Units (Monthly)", f"{total_units} pcs")
-    col2.metric("Avg. Efficiency", f"{avg_efficiency:.1f}%")
-    col3.metric("Top Demand SKU", prod_df.groupby('SKU')['Actual_Units'].sum().idxmax())
+    # Simple Stitching: Concatenate files
+    if len(dfs) > 1:
+        df = pd.concat(dfs, ignore_index=True)
+        st.success(f"Successfully stitched {len(dfs)} files.")
+    else:
+        df = dfs[0]
 
-    # Productivity Chart
-    st.subheader("Daily Production vs Target")
-    fig = px.line(prod_df, x='Date', y=['Actual_Units', 'Target_Units'], color_discrete_map={"Actual_Units": "#1f77b4", "Target_Units": "#ff7f0e"})
-    st.plotly_chart(fig, use_container_width=True)
+    # --- 3. DATA CLEANING & ROUNDING FIX (Addressing your Numeric Error) ---
+    st.subheader("Data Processing")
+    
+    # Create a copy to avoid modifying the original until cleaned
+    processed_df = df.copy()
 
-# --- MODULE 2: COST VARIANCE ---
-elif menu == "Cost Variance Analysis":
-    st.title("💸 Actual vs. Accrued Cost")
-    
-    # Calculation Logic
-    # Accrued = Hours * Rate
-    # Let's merge employee rates with production SKU mapping
-    cost_df = prod_df.merge(emp_df[['Style_Assigned', 'Hourly_Rate']], left_on='SKU', right_on='Style_Assigned')
-    cost_df['Actual_Cost'] = cost_df['Hours_Worked'] * cost_df['Hourly_Rate']
-    cost_df['Standard_Cost'] = (cost_df['Target_Units'] / cost_df['Actual_Units']) * cost_df['Actual_Cost'] # Simplified logic
-    
-    st.dataframe(cost_df[['Date', 'SKU', 'Actual_Cost', 'Standard_Cost']].style.highlight_max(axis=0))
-    
-    st.subheader("Cost Variance by Style")
-    fig2 = px.bar(cost_df, x='SKU', y=['Actual_Cost', 'Standard_Cost'], barmode='group')
-    st.plotly_chart(fig2, use_container_width=True)
+    # Step A: Convert columns to numeric if they contain numbers disguised as strings
+    for col in processed_df.columns:
+        # Check if the column is an 'object' (text) type
+        if processed_df[col].dtype == 'object':
+            # errors='coerce' turns non-numeric text into NaN (Null)
+            temp_numeric = pd.to_numeric(processed_df[col], errors='coerce')
+            
+            # If the column actually contains numbers, update it
+            if not temp_numeric.isna().all():
+                processed_df[col] = temp_numeric
 
-# --- MODULE 3: STYLE BOM (NEW TAB) ---
-elif menu == "Style BOM (Process)":
-    st.title("📋 Style Bill of Materials & Process")
-    selected_sku = st.selectbox("Select SKU Style", list(bom_data.keys()))
-    
-    st.info(f"Showing manufacturing sequence for **{selected_sku}**")
-    
-    processes = bom_data[selected_sku]
-    for i, step in enumerate(processes):
-        st.write(f"**Step {i+1}:** {step}")
-    
-    st.image("https://via.placeholder.com/800x200.png?text=Process+Flow+Visual+Placeholder") # You can replace with real process diagrams
+    # Step B: Safe Rounding
+    try:
+        # Now that dtypes are numeric, .round(2) will work perfectly
+        processed_df = processed_df.round(2)
+        st.info("💡 All numeric columns have been rounded to 2 decimal places.")
+    except TypeError:
+        st.warning("Some columns could not be rounded because they contain non-numeric text.")
 
-# --- MODULE 4: EMPLOYEE DIRECTORY ---
+    # --- 4. DISPLAY & DOWNLOAD ---
+    st.dataframe(processed_df, use_container_width=True)
+
+    csv = processed_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Stitched Data",
+        data=csv,
+        file_name="stitched_output.csv",
+        mime="text/csv",
+    )
+
 else:
-    st.title("👥 Employee & Wages")
-    st.table(emp_df)
+    st.info("Please upload files to see the stitching results.")
