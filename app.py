@@ -1,29 +1,52 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/README.md b/README.md
-index a35cb1d24fceafd0be0461fff71ff15c649fc7f1..a6af18e7ceb8924cb83b3cc5038ddf3656406b74 100644
---- a/README.md
-+++ b/README.md
-@@ -1,7 +1,16 @@
--# Welcome to GitHub Desktop!
-+# Stitching Costing Playbook
- 
--This is your README. READMEs are where you can communicate what your project is and how to use it.
-+This repository now contains a practical blueprint to improve stitching costing reliability for factories managing many employees, style-wise standards, and actual-vs-master variance tracking.
- 
--Write your name on line 6, save it, and then head back to GitHub Desktop.
-+## Start here
- 
--This is a type of data work in the tensor flow during his peak. <br> Author - Gourav bhatt
-+- `docs/stitching-costing-environment.md` — complete operating model, data structure, formulas, governance controls, KPIs, and a 30-60-90 implementation plan.
-+
-+## Why this helps
-+
-+The framework is designed to make costing more reliable by combining:
-+
-+- standard (master) time and cost control,
-+- daily actual production and expense capture,
-+- strict versioning and governance,
-+- rapid variance detection with clear ownership.
- 
-EOF
-)
+import streamlit as st
+import pandas as pd
+
+st.set_page_config(page_title="Data Stitching Tool", layout="wide")
+
+st.title("🧵 Professional Data Stitching App")
+
+# --- STEP 1: UPLOAD TWO FILES ---
+col1, col2 = st.columns(2)
+with col1:
+    file_a = st.file_uploader("Upload First File (Base)", type=['csv', 'xlsx'])
+with col2:
+    file_b = st.file_uploader("Upload Second File (To Join)", type=['csv', 'xlsx'])
+
+if file_a and file_b:
+    # Load files
+    df1 = pd.read_csv(file_a) if file_a.name.endswith('.csv') else pd.read_excel(file_a)
+    df2 = pd.read_csv(file_b) if file_b.name.endswith('.csv') else pd.read_excel(file_b)
+
+    # --- STEP 2: SELECT THE JOIN KEY ---
+    common_columns = list(set(df1.columns) & set(df2.columns))
+    
+    if common_columns:
+        join_key = st.selectbox("Select the common column to stitch on:", common_columns)
+        
+        if st.button("Stitch Data Now"):
+            # --- STEP 3: THE STITCHING (Merging) ---
+            combined_df = pd.merge(df1, df2, on=join_key, how='left')
+
+            # --- STEP 4: THE ERROR FIX (Line 306 Solution) ---
+            # We loop through columns to force numeric types before rounding
+            for col in combined_df.columns:
+                # We try to convert everything to numeric. 
+                # Strings like "Apple" stay as strings because of 'ignore' or check
+                if combined_df[col].dtype == 'object':
+                    combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
+
+            # Now we round only the numeric columns to 2 decimal places
+            # This is exactly where your line 306 was failing
+            final_df = combined_df.round(2)
+
+            st.success("Stitched and Rounded Successfully!")
+            st.dataframe(final_df)
+
+            # --- STEP 5: DOWNLOAD ---
+            csv = final_df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download Result", data=csv, file_name="stitched_output.csv")
+    else:
+        st.error("No common columns found between the two files to stitch them together.")
+
+else:
+    st.info("Please upload two files to begin the stitching process.")
