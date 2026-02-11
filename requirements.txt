@@ -1,4 +1,1 @@
-streamlit>=1.35.0
-pandas
-plotly
-openpyxl
+pip install streamlit pandas plotly openpyxl
