@@ -1,80 +1,90 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import io
 
-# --- 1. CSS STYLING FIX (Addressing your Line 9 Error) ---
-# Changed 'unsafe_base64=True' to 'unsafe_allow_html=True'
+# --- 1. UI SETUP (Fixed Line 9 Error) ---
+st.set_page_config(page_title="Intelligent Costing AI", layout="wide")
+
 st.markdown("""
     <style>
-    .main {
-        background-color: #f5f5f5;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 5px;
-        height: 3em;
-        background-color: #007bff;
-        color: white;
+    .reportview-container { background: #f0f2f6; }
+    .metric-card {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🧵 Professional Data Stitching App")
-st.write("Upload your files to merge and process them safely.")
+st.title("🚀 Intelligent Costing & Stitching Demo")
 
-# --- 2. FILE UPLOADER ---
-uploaded_files = st.file_uploader("Choose CSV or Excel files", type=['csv', 'xlsx'], accept_multiple_files=True)
+# --- 2. LEARN THE SKILL: DATASET GENERATOR (The Example) ---
+st.sidebar.header("Step 1: Generate Demo Data")
+if st.sidebar.button("Create Sample Costing Data"):
+    # Simulated Bill of Materials
+    bom_data = {
+        "Component": ["Processor", "Memory", "Chassis", "Display"],
+        "Quantity": [1, 2, 1, 1],
+        "Unit": ["pcs", "pcs", "pcs", "pcs"]
+    }
+    # Simulated Price List (with a "string" number to test your error fix)
+    price_data = {
+        "Component": ["Processor", "Memory", "Chassis", "Display"],
+        "Unit_Cost": ["250.50", "80.00", "45.25", "120.00"], # Strings to simulate messy data
+        "Currency": ["USD", "USD", "USD", "USD"]
+    }
+    st.session_state['df_bom'] = pd.DataFrame(bom_data)
+    st.session_state['df_price'] = pd.DataFrame(price_data)
+    st.sidebar.success("Sample Data Loaded!")
 
-if uploaded_files:
-    dfs = []
-    for file in uploaded_files:
-        if file.name.endswith('.csv'):
-            dfs.append(pd.read_csv(file))
-        else:
-            dfs.append(pd.read_excel(file))
+# --- 3. THE "INTELLIGENT" STITCHING LOGIC ---
+if 'df_bom' in st.session_state and 'df_price' in st.session_state:
+    col1, col2 = st.columns(2)
     
-    # Simple Stitching: Concatenate files
-    if len(dfs) > 1:
-        df = pd.concat(dfs, ignore_index=True)
-        st.success(f"Successfully stitched {len(dfs)} files.")
-    else:
-        df = dfs[0]
+    with col1:
+        st.subheader("📦 Bill of Materials")
+        st.dataframe(st.session_state['df_bom'])
+        
+    with col2:
+        st.subheader("💰 Supplier Price List")
+        st.dataframe(st.session_state['df_price'])
 
-    # --- 3. DATA CLEANING & ROUNDING FIX (Addressing your Numeric Error) ---
-    st.subheader("Data Processing")
-    
-    # Create a copy to avoid modifying the original until cleaned
-    processed_df = df.copy()
+    if st.button("Calculate Final Product Cost"):
+        # STITCHING: Merging the two datasets on 'Component'
+        stitched_df = pd.merge(st.session_state['df_bom'], st.session_state['df_price'], on="Component")
 
-    # Step A: Convert columns to numeric if they contain numbers disguised as strings
-    for col in processed_df.columns:
-        # Check if the column is an 'object' (text) type
-        if processed_df[col].dtype == 'object':
-            # errors='coerce' turns non-numeric text into NaN (Null)
-            temp_numeric = pd.to_numeric(processed_df[col], errors='coerce')
-            
-            # If the column actually contains numbers, update it
-            if not temp_numeric.isna().all():
-                processed_df[col] = temp_numeric
+        # --- THE FIX: Converting 'Object' to 'Numeric' before math ---
+        for col in ['Quantity', 'Unit_Cost']:
+            stitched_df[col] = pd.to_numeric(stitched_df[col], errors='coerce')
 
-    # Step B: Safe Rounding
-    try:
-        # Now that dtypes are numeric, .round(2) will work perfectly
-        processed_df = processed_df.round(2)
-        st.info("💡 All numeric columns have been rounded to 2 decimal places.")
-    except TypeError:
-        st.warning("Some columns could not be rounded because they contain non-numeric text.")
+        # COSTING CALCULATIONS
+        stitched_df['Total_Component_Cost'] = stitched_df['Quantity'] * stitched_df['Unit_Cost']
+        
+        # Calculate Grand Total
+        grand_total = stitched_df['Total_Component_Cost'].sum()
+        
+        # APPLYING MARGIN (Intelligence)
+        margin_percent = 0.30  # 30% Margin
+        srp = grand_total / (1 - margin_percent)
 
-    # --- 4. DISPLAY & DOWNLOAD ---
-    st.dataframe(processed_df, use_container_width=True)
+        # --- FINAL ROUNDING (Line 306 Fix) ---
+        final_report = stitched_df.round(2)
 
-    csv = processed_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Stitched Data",
-        data=csv,
-        file_name="stitched_output.csv",
-        mime="text/csv",
-    )
+        # --- 4. DISPLAY RESULTS ---
+        st.divider()
+        st.header("📊 Final Costing Analysis")
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Manufacturing Cost", f"${grand_total:,.2f}")
+        c2.metric("Target Margin", "30%")
+        c3.metric("Suggested Retail (SRP)", f"${srp:,.2f}", delta=f"${srp-grand_total:,.2f} Profit")
+
+        st.table(final_report[['Component', 'Quantity', 'Unit_Cost', 'Total_Component_Cost']])
+
+        # Download Result
+        csv = final_report.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Export Costing Sheet", data=csv, file_name="costing_report.csv")
 
 else:
-    st.info("Please upload files to see the stitching results.")
+    st.info("Click the button in the sidebar to generate the demo data and see the intelligence in action!")
