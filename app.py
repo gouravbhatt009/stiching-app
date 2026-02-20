@@ -1,9 +1,4 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/app.py b/app.py
-index 920c7ef55db87303a334c04c47c62e0bf2229e5d..ac8632e732f647c6475164f34cbfd988441d3451 100644
---- a/app.py
-+++ b/app.py
-@@ -1,84 +1,177 @@
+
 -import streamlit as st
 +from pathlib import Path
 +
@@ -222,6 +217,3 @@ index 920c7ef55db87303a334c04c47c62e0bf2229e5d..ac8632e732f647c6475164f34cbfd988
      st.error(f"Execution Error: {e}")
 -    st.info("Ensure all three filenames match exactly: 'Sales Jan-26...', 'PG Forward...', 'PG Reverse...'")
 +    st.info("Ensure files exist and contain expected columns for sales, forward, and reverse reports.")
- 
-EOF
-)
