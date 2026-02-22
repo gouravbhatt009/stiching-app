@@ -74,13 +74,25 @@ def read_upload(uploaded_file):
         return None
 
 def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Data")
-    return buf.getvalue()
+    try:
+        import openpyxl  # noqa: F401
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Data")
+        return buf.getvalue()
+    except ImportError:
+        # Fallback: return CSV bytes if openpyxl not available
+        return df.to_csv(index=False).encode("utf-8")
 
 def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
+
+def excel_available() -> bool:
+    try:
+        import openpyxl  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 # ─────────────────────────────────────────────
 # Reusable Import Widget
@@ -95,13 +107,17 @@ def import_section(key, required_cols, session_key, template_df, label):
         )
         dl1, dl2 = st.columns(2)
         with dl1:
-            st.download_button(
-                "⬇️ Download Excel Template",
-                data=df_to_excel_bytes(template_df),
-                file_name=f"{key}_template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"dl_xlsx_{key}"
-            )
+            try:
+                import openpyxl  # noqa
+                st.download_button(
+                    "⬇️ Download Excel Template",
+                    data=df_to_excel_bytes(template_df),
+                    file_name=f"{key}_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_xlsx_{key}"
+                )
+            except Exception:
+                st.caption("Excel template unavailable — use CSV")
         with dl2:
             st.download_button(
                 "⬇️ Download CSV Template",
@@ -177,6 +193,21 @@ TEMPLATES = {
          "Style": "1065YKBLUE", "Challan_No": "CH-001",
          "Operation": "Stitching Front", "Target": 80, "Achieved": 85, "Rate_Rs": 4.00},
     ]),
+    "employee_master": pd.DataFrame([
+        {"E_Code":"E001","Name":"Ramesh Kumar","Type":"Karigar","Daily_Rate_Rs":450,"Hourly_Rate_Rs":56.25},
+        {"E_Code":"E101","Name":"Amit Sharma","Type":"Operating","Daily_Rate_Rs":600,"Hourly_Rate_Rs":75.00},
+    ]),
+    "karigar_attendance": pd.DataFrame([
+        {"Date":"2025-01-15","E_Code":"E001","In_Punch":"09:00","Out_Punch":"18:30"},
+        {"Date":"2025-01-15","E_Code":"E002","In_Punch":"09:00","Out_Punch":"15:00"},
+    ]),
+    "operating_attendance": pd.DataFrame([
+        {"Date":"2025-01-15","E_Code":"E101","In_Punch":"09:00","Out_Punch":"18:00"},
+    ]),
+    "style_running_log": pd.DataFrame([
+        {"Date":"2025-01-15","Style":"1065YKBLUE","Hours_Run":5},
+        {"Date":"2025-01-15","Style":"1066YKRED","Hours_Run":3},
+    ]),
 }
 
 # ─────────────────────────────────────────────
@@ -221,6 +252,32 @@ def init_state():
             "Style","Challan_No","Operation",
             "Target","Achieved","Rate_Rs"
         ])
+    # Employee Master (E-code based)
+    if "employee_master" not in st.session_state:
+        st.session_state.employee_master = pd.DataFrame([
+            {"E_Code":"E001","Name":"Ramesh Kumar",  "Type":"Karigar",  "Daily_Rate_Rs":450,"Hourly_Rate_Rs":56.25},
+            {"E_Code":"E002","Name":"Suresh Singh",  "Type":"Karigar",  "Daily_Rate_Rs":420,"Hourly_Rate_Rs":52.50},
+            {"E_Code":"E003","Name":"Priya Devi",    "Type":"Karigar",  "Daily_Rate_Rs":400,"Hourly_Rate_Rs":50.00},
+            {"E_Code":"E004","Name":"Mohan Lal",     "Type":"Karigar",  "Daily_Rate_Rs":460,"Hourly_Rate_Rs":57.50},
+            {"E_Code":"E005","Name":"Sunita Sharma", "Type":"Karigar",  "Daily_Rate_Rs":410,"Hourly_Rate_Rs":51.25},
+            {"E_Code":"E101","Name":"Amit Sharma",   "Type":"Operating","Daily_Rate_Rs":600,"Hourly_Rate_Rs":75.00},
+            {"E_Code":"E102","Name":"Kavita Rao",    "Type":"Operating","Daily_Rate_Rs":550,"Hourly_Rate_Rs":68.75},
+        ])
+    if "karigar_attendance" not in st.session_state:
+        st.session_state.karigar_attendance = pd.DataFrame(columns=[
+            "Date","E_Code","Name","In_Punch","Out_Punch",
+            "Total_Hours","Productive_Hours","Day_Type",
+            "Basic_Pay","OT_Hours","OT_Pay","Total_Pay"
+        ])
+    if "operating_attendance" not in st.session_state:
+        st.session_state.operating_attendance = pd.DataFrame(columns=[
+            "Date","E_Code","Name","In_Punch","Out_Punch",
+            "Total_Hours","Hourly_Rate_Rs","Total_Pay"
+        ])
+    if "style_running_log" not in st.session_state:
+        st.session_state.style_running_log = pd.DataFrame(columns=[
+            "Date","Style","Hours_Run","Percentage"
+        ])
 
 init_state()
 
@@ -244,9 +301,12 @@ tabs = st.tabs([
     "🧾 Challan Management",
     "📊 Efficiency & Costing",
     "💰 Payroll Calculator",
+    "🕐 Karigar Salary & Attendance",
+    "🏢 Operating Staff",
+    "🌟 Employee Performance",
     "⚙️ Master Data",
 ])
-tab_dash, tab_timelog, tab_daily, tab_challan, tab_efficiency, tab_payroll, tab_master = tabs
+tab_dash, tab_timelog, tab_daily, tab_challan, tab_efficiency, tab_payroll, tab_salary, tab_operating, tab_performance, tab_master = tabs
 
 # ════════════════════════════════════════════════════════════
 # TAB 1 – DASHBOARD
@@ -719,7 +779,7 @@ with tab_payroll:
 # ════════════════════════════════════════════════════════════
 with tab_master:
     st.markdown('<div class="section-title">⚙️ Master Data Management</div>', unsafe_allow_html=True)
-    m1, m2 = st.tabs(["👗 Style-Operation Master", "👷 Karigar Master"])
+    m1, m2, m3 = st.tabs(["👗 Style-Operation Master", "👷 Karigar Master", "🪪 Employee Master (E-Code)"])
 
     with m1:
         st.markdown('<div class="section-title">Style Operations, Targets and Rates</div>', unsafe_allow_html=True)
@@ -812,6 +872,444 @@ with tab_master:
             st.download_button("📥 Export Karigar Master (CSV)",
                 data=df_to_csv_bytes(st.session_state.karigar_master),
                 file_name="karigar_master.csv", mime="text/csv")
+
+    with m3:
+        st.markdown('<div class="section-title">Employee Master - E-Code Register</div>', unsafe_allow_html=True)
+        st.markdown('<div class="info-box">E-Code is the unique system code for each employee (Karigar + Operating Staff). Used for attendance and salary calculation. Karigar_ID in Daily Sheet should match E_Code here for performance analysis.</div>', unsafe_allow_html=True)
+
+        import_section(
+            key="employee_master",
+            required_cols=["E_Code","Name","Type","Daily_Rate_Rs","Hourly_Rate_Rs"],
+            session_key="employee_master",
+            template_df=TEMPLATES["employee_master"],
+            label="Employee Master (E-Code)"
+        )
+
+        with st.expander("➕ Add Employee Manually"):
+            with st.form("emp_master_form", clear_on_submit=True):
+                em1, em2 = st.columns(2)
+                with em1:
+                    em_code = st.text_input("E-Code (e.g. E006)")
+                    em_name = st.text_input("Full Name")
+                    em_type = st.selectbox("Type", ["Karigar","Operating"])
+                with em2:
+                    em_daily  = st.number_input("Daily Rate (Rs)", min_value=100, step=10, value=400)
+                    em_hourly = st.number_input("Hourly Rate (Rs)", min_value=0.0, step=0.5,
+                                                value=round(400/8,2), format="%.2f")
+                    st.caption("Tip: Hourly Rate = Daily Rate / 8")
+                if st.form_submit_button("Add Employee") and em_code and em_name:
+                    st.session_state.employee_master = pd.concat(
+                        [st.session_state.employee_master,
+                         pd.DataFrame([{"E_Code":em_code,"Name":em_name,"Type":em_type,
+                                        "Daily_Rate_Rs":em_daily,"Hourly_Rate_Rs":em_hourly}])],
+                        ignore_index=True
+                    )
+                    st.success(f"Employee {em_name} ({em_code}) added!")
+
+        st.dataframe(st.session_state.employee_master, use_container_width=True, hide_index=True)
+        ex1, ex2 = st.columns(2)
+        with ex1:
+            st.download_button("📥 Export Employee Master (Excel)",
+                data=df_to_excel_bytes(st.session_state.employee_master),
+                file_name="employee_master.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with ex2:
+            st.download_button("📥 Export Employee Master (CSV)",
+                data=df_to_csv_bytes(st.session_state.employee_master),
+                file_name="employee_master.csv", mime="text/csv")
+
+# ════════════════════════════════════════════════════════════
+# TAB 8 – KARIGAR SALARY & ATTENDANCE
+# ════════════════════════════════════════════════════════════
+with tab_salary:
+    st.markdown('<div class="section-title">🕐 Karigar Salary - Attendance & Auto Calculation</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-box">Shift: 9 AM - 6 PM (9 hrs). Deductions: 30 min lunch + 15 min tea + 15 min non-productive = 1 hr. Salary paid on 8 hr basis.<br>Rule: Work 9 AM - 3 PM = Full Day. Work 9 AM - 1 PM = Half Day. OT after 6 PM at hourly rate.</div>', unsafe_allow_html=True)
+
+    # ── SALARY CALCULATION LOGIC ────────────────────────────
+    def calculate_karigar_salary(e_code, in_punch_str, out_punch_str, daily_rate):
+        try:
+            fmt = "%H:%M"
+            t_in  = datetime.strptime(in_punch_str.strip(), fmt)
+            t_out = datetime.strptime(out_punch_str.strip(), fmt)
+            shift_start = datetime.strptime("09:00", fmt)
+            half_day_cutoff = datetime.strptime("13:00", fmt)
+            full_day_cutoff = datetime.strptime("15:00", fmt)
+            shift_end   = datetime.strptime("18:00", fmt)
+            ot_start    = shift_end
+
+            total_mins = max((t_out - t_in).seconds // 60, 0)
+            total_hrs  = round(total_mins / 60, 2)
+
+            # Deduct 1 hr (30 lunch + 15 tea + 15 NP) if worked >= 8 hrs
+            productive_hrs = max(total_hrs - 1.0, 0) if total_hrs >= 8 else total_hrs
+
+            # Day type logic
+            if t_out <= half_day_cutoff:
+                day_type  = "Half Day"
+                basic_pay = daily_rate * 0.5
+            elif t_out >= full_day_cutoff:
+                day_type  = "Full Day"
+                basic_pay = daily_rate
+            else:
+                day_type  = "Partial (between half & full)"
+                basic_pay = daily_rate * 0.75
+
+            # OT: hours beyond 6 PM, max 3 hrs
+            ot_mins = max((t_out - shift_end).seconds // 60, 0) if t_out > shift_end else 0
+            ot_hrs  = min(round(ot_mins / 60, 2), 3.0)
+            hourly_rate = daily_rate / 8
+            ot_pay  = round(ot_hrs * hourly_rate, 2)
+            total_pay = round(basic_pay + ot_pay, 2)
+
+            return total_hrs, productive_hrs, day_type, round(basic_pay,2), ot_hrs, ot_pay, total_pay
+        except Exception as ex:
+            return 0, 0, "Error", 0, 0, 0, 0
+
+    # ── IMPORT ──────────────────────────────────────────────
+    import_section(
+        key="karigar_attendance",
+        required_cols=["Date","E_Code","In_Punch","Out_Punch"],
+        session_key="karigar_attendance",
+        template_df=TEMPLATES["karigar_attendance"],
+        label="Karigar Attendance (In/Out Punch)"
+    )
+
+    # When imported with only Date/E_Code/In_Punch/Out_Punch, auto-calculate salary
+    if not st.session_state.karigar_attendance.empty and "Total_Pay" not in st.session_state.karigar_attendance.columns:
+        emp = st.session_state.employee_master
+        att = st.session_state.karigar_attendance.copy()
+        rows = []
+        for _, row in att.iterrows():
+            emp_row = emp[emp["E_Code"] == row["E_Code"]]
+            if not emp_row.empty:
+                dr = float(emp_row["Daily_Rate_Rs"].values[0])
+                name = emp_row["Name"].values[0]
+                th, ph, dt, bp, oth, otp, tp = calculate_karigar_salary(
+                    row["E_Code"], str(row["In_Punch"]), str(row["Out_Punch"]), dr
+                )
+                rows.append({**row, "Name": name, "Total_Hours": th, "Productive_Hours": ph,
+                              "Day_Type": dt, "Basic_Pay": bp, "OT_Hours": oth, "OT_Pay": otp, "Total_Pay": tp})
+            else:
+                rows.append(row.to_dict())
+        st.session_state.karigar_attendance = pd.DataFrame(rows)
+        st.rerun()
+
+    # ── MANUAL ENTRY ────────────────────────────────────────
+    with st.expander("✏️ Manual Attendance Entry", expanded=True):
+        emp_karigar = st.session_state.employee_master[
+            st.session_state.employee_master["Type"] == "Karigar"
+        ]
+        emp_opts = {f"{r['E_Code']} - {r['Name']}": r for _, r in emp_karigar.iterrows()}
+
+        with st.form("salary_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                att_date = st.date_input("Date", value=date.today())
+                emp_sel  = st.selectbox("Employee (E Code)", list(emp_opts.keys()))
+            with c2:
+                in_punch  = st.text_input("In Punch (HH:MM)", value="09:00")
+                out_punch = st.text_input("Out Punch (HH:MM)", value="18:00")
+            with c3:
+                emp_row = emp_opts[emp_sel]
+                dr = float(emp_row["Daily_Rate_Rs"])
+                st.info(f"Daily Rate: Rs {dr} | Hourly: Rs {dr/8:.2f}")
+
+            if st.form_submit_button("Calculate & Save", use_container_width=True):
+                th, ph, dt, bp, oth, otp, tp = calculate_karigar_salary(
+                    emp_row["E_Code"], in_punch, out_punch, dr
+                )
+                new_att = {
+                    "Date": str(att_date), "E_Code": emp_row["E_Code"],
+                    "Name": emp_row["Name"], "In_Punch": in_punch, "Out_Punch": out_punch,
+                    "Total_Hours": th, "Productive_Hours": ph, "Day_Type": dt,
+                    "Basic_Pay": bp, "OT_Hours": oth, "OT_Pay": otp, "Total_Pay": tp
+                }
+                st.session_state.karigar_attendance = pd.concat(
+                    [st.session_state.karigar_attendance, pd.DataFrame([new_att])], ignore_index=True
+                )
+                st.success(f"Saved! {emp_row['Name']} | {dt} | Basic: Rs {bp} | OT: Rs {otp} | Total: Rs {tp}")
+
+    # ── VIEW ATTENDANCE ──────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="section-title">Attendance Records</div>', unsafe_allow_html=True)
+    if not st.session_state.karigar_attendance.empty:
+        att_filter = st.date_input("Filter by Date", value=date.today(), key="att_filter")
+        att_view = st.session_state.karigar_attendance[
+            st.session_state.karigar_attendance["Date"] == str(att_filter)
+        ]
+        if not att_view.empty:
+            st.dataframe(att_view, use_container_width=True, hide_index=True)
+            total_salary_day = att_view["Total_Pay"].sum() if "Total_Pay" in att_view.columns else 0
+            st.metric("Total Salary Payout for Day", f"Rs {total_salary_day:,.2f}")
+        else:
+            st.info("No attendance for selected date.")
+
+        st.markdown('<div class="section-title">Monthly Summary</div>', unsafe_allow_html=True)
+        att_all = st.session_state.karigar_attendance.copy()
+        if "Total_Pay" in att_all.columns and "Name" in att_all.columns:
+            monthly = att_all.groupby("E_Code").agg(
+                Name=("Name","first"),
+                Days_Present=("Date","nunique"),
+                Full_Days=("Day_Type", lambda x: (x=="Full Day").sum()),
+                Half_Days=("Day_Type", lambda x: (x=="Half Day").sum()),
+                Total_OT_Hrs=("OT_Hours","sum"),
+                Total_Basic=("Basic_Pay","sum"),
+                Total_OT_Pay=("OT_Pay","sum"),
+                Total_Pay=("Total_Pay","sum"),
+            ).round(2).reset_index()
+            st.dataframe(monthly, use_container_width=True, hide_index=True)
+
+        ex1, ex2 = st.columns(2)
+        with ex1:
+            st.download_button("📥 Export Attendance (Excel)",
+                data=df_to_excel_bytes(st.session_state.karigar_attendance),
+                file_name="karigar_attendance.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with ex2:
+            st.download_button("📥 Export Attendance (CSV)",
+                data=df_to_csv_bytes(st.session_state.karigar_attendance),
+                file_name="karigar_attendance.csv", mime="text/csv")
+    else:
+        st.info("No attendance records yet.")
+
+
+# ════════════════════════════════════════════════════════════
+# TAB 9 – OPERATING STAFF
+# ════════════════════════════════════════════════════════════
+with tab_operating:
+    st.markdown('<div class="section-title">🏢 Operating Staff Attendance & Cost Allocation</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-box">Operating staff cost is NOT added per style directly. Cost is split across styles run that day in proportion to their running hours.</div>', unsafe_allow_html=True)
+
+    col_op, col_style = st.columns(2)
+
+    # ── OPERATING STAFF ATTENDANCE ───────────────────────────
+    with col_op:
+        st.markdown('<div class="section-title">Operating Staff In/Out</div>', unsafe_allow_html=True)
+
+        import_section(
+            key="operating_attendance",
+            required_cols=["Date","E_Code","In_Punch","Out_Punch"],
+            session_key="operating_attendance",
+            template_df=TEMPLATES["operating_attendance"],
+            label="Operating Staff Attendance"
+        )
+
+        emp_op = st.session_state.employee_master[
+            st.session_state.employee_master["Type"] == "Operating"
+        ]
+        op_opts = {f"{r['E_Code']} - {r['Name']}": r for _, r in emp_op.iterrows()}
+
+        with st.expander("✏️ Manual Entry - Operating Staff", expanded=True):
+            with st.form("op_attend_form", clear_on_submit=True):
+                oa_date    = st.date_input("Date", value=date.today(), key="oa_date")
+                oa_emp     = st.selectbox("Employee", list(op_opts.keys()))
+                oa_in      = st.text_input("In Punch (HH:MM)", value="09:00", key="oa_in")
+                oa_out     = st.text_input("Out Punch (HH:MM)", value="18:00", key="oa_out")
+                if st.form_submit_button("Save", use_container_width=True):
+                    er = op_opts[oa_emp]
+                    try:
+                        fmt = "%H:%M"
+                        t_in  = datetime.strptime(oa_in.strip(), fmt)
+                        t_out = datetime.strptime(oa_out.strip(), fmt)
+                        hrs   = round((t_out - t_in).seconds / 3600, 2)
+                    except:
+                        hrs = 0
+                    hr_rate = float(er["Hourly_Rate_Rs"])
+                    total_p = round(hrs * hr_rate, 2)
+                    new_op = {
+                        "Date": str(oa_date), "E_Code": er["E_Code"], "Name": er["Name"],
+                        "In_Punch": oa_in, "Out_Punch": oa_out,
+                        "Total_Hours": hrs, "Hourly_Rate_Rs": hr_rate, "Total_Pay": total_p
+                    }
+                    st.session_state.operating_attendance = pd.concat(
+                        [st.session_state.operating_attendance, pd.DataFrame([new_op])], ignore_index=True
+                    )
+                    st.success(f"Saved! {er['Name']} | {hrs} hrs | Rs {total_p}")
+
+        if not st.session_state.operating_attendance.empty:
+            op_filter = st.date_input("Filter Date", value=date.today(), key="op_filter")
+            op_view   = st.session_state.operating_attendance[
+                st.session_state.operating_attendance["Date"] == str(op_filter)
+            ]
+            if not op_view.empty:
+                st.dataframe(op_view, use_container_width=True, hide_index=True)
+                st.metric("Total Operating Staff Cost", f"Rs {op_view['Total_Pay'].sum():,.2f}")
+
+    # ── STYLE RUNNING LOG ────────────────────────────────────
+    with col_style:
+        st.markdown('<div class="section-title">Style Running Hours (for Cost Allocation)</div>', unsafe_allow_html=True)
+
+        import_section(
+            key="style_running_log",
+            required_cols=["Date","Style","Hours_Run"],
+            session_key="style_running_log",
+            template_df=TEMPLATES["style_running_log"],
+            label="Style Running Log"
+        )
+
+        styles_list_op = st.session_state.style_master["Style"].unique().tolist()
+        with st.expander("✏️ Add Style Running Hours", expanded=True):
+            with st.form("style_run_form", clear_on_submit=True):
+                sr_date  = st.date_input("Date", value=date.today(), key="sr_date")
+                sr_style = st.selectbox("Style", styles_list_op) if styles_list_op else st.text_input("Style")
+                sr_hrs   = st.number_input("Hours Run Today", min_value=0.0, step=0.5)
+                if st.form_submit_button("Add"):
+                    new_sr = {"Date": str(sr_date), "Style": sr_style, "Hours_Run": sr_hrs, "Percentage": 0}
+                    st.session_state.style_running_log = pd.concat(
+                        [st.session_state.style_running_log, pd.DataFrame([new_sr])], ignore_index=True
+                    )
+                    st.success(f"Added {sr_style}: {sr_hrs} hrs")
+
+        if not st.session_state.style_running_log.empty:
+            sr_filter = st.date_input("Filter Date", value=date.today(), key="sr_filter")
+            sr_view   = st.session_state.style_running_log[
+                st.session_state.style_running_log["Date"] == str(sr_filter)
+            ].copy()
+            if not sr_view.empty:
+                total_hrs_run = sr_view["Hours_Run"].sum()
+                sr_view["Percentage"] = (sr_view["Hours_Run"] / total_hrs_run * 100).round(1)
+                st.dataframe(sr_view, use_container_width=True, hide_index=True)
+
+    # ── COST ALLOCATION REPORT ───────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="section-title">📊 Operating Cost Allocation to Styles</div>', unsafe_allow_html=True)
+    alloc_date = st.date_input("Allocation Date", value=date.today(), key="alloc_date")
+
+    op_day = st.session_state.operating_attendance[
+        st.session_state.operating_attendance["Date"] == str(alloc_date)
+    ]
+    sr_day = st.session_state.style_running_log[
+        st.session_state.style_running_log["Date"] == str(alloc_date)
+    ].copy()
+
+    if not op_day.empty and not sr_day.empty:
+        total_op_cost = op_day["Total_Pay"].sum()
+        total_run_hrs = sr_day["Hours_Run"].sum()
+        sr_day["Percentage"]      = (sr_day["Hours_Run"] / total_run_hrs * 100).round(2)
+        sr_day["Allocated_Cost_Rs"] = (sr_day["Percentage"] / 100 * total_op_cost).round(2)
+        st.metric("Total Operating Cost", f"Rs {total_op_cost:,.2f}")
+        st.dataframe(sr_day[["Style","Hours_Run","Percentage","Allocated_Cost_Rs"]], use_container_width=True, hide_index=True)
+        ex1, ex2 = st.columns(2)
+        with ex1:
+            st.download_button("📥 Export Allocation (Excel)",
+                data=df_to_excel_bytes(sr_day),
+                file_name="op_cost_allocation.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with ex2:
+            st.download_button("📥 Export Allocation (CSV)",
+                data=df_to_csv_bytes(sr_day),
+                file_name="op_cost_allocation.csv", mime="text/csv")
+    else:
+        st.info("Add operating staff attendance AND style running hours for the same date to see allocation.")
+
+
+# ════════════════════════════════════════════════════════════
+# TAB 10 – EMPLOYEE PERFORMANCE
+# ════════════════════════════════════════════════════════════
+with tab_performance:
+    st.markdown('<div class="section-title">🌟 Employee Performance Dashboard</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-box">Compare how much value each karigar produced (piece-rate earned) vs how much they were paid (salary). This is the basis for salary increment decisions.</div>', unsafe_allow_html=True)
+
+    if st.session_state.daily_sheet.empty or st.session_state.karigar_attendance.empty:
+        st.info("Need both Daily Sheet data and Karigar Attendance data to show performance analysis.")
+    else:
+        # Period selector
+        p1, p2 = st.columns(2)
+        with p1: perf_start = st.date_input("From", value=date.today() - timedelta(days=29), key="perf_start")
+        with p2: perf_end   = st.date_input("To",   value=date.today(), key="perf_end")
+
+        # Piece-rate earned from daily sheet
+        ds = st.session_state.daily_sheet.copy()
+        ds["Date_dt"] = pd.to_datetime(ds["Date"])
+        ds = ds[(ds["Date_dt"] >= pd.Timestamp(perf_start)) & (ds["Date_dt"] <= pd.Timestamp(perf_end))]
+        ds["Piece_Earned"] = ds["Achieved"] * ds["Rate_Rs"]
+
+        piece_summary = ds.groupby("Karigar_ID").agg(
+            Piece_Earned_Rs=("Piece_Earned","sum"),
+            Total_Pieces=("Achieved","sum"),
+            Avg_Efficiency=("Achieved", lambda x: 0),  # placeholder
+        ).reset_index()
+
+        # Merge efficiency
+        ds["Efficiency"] = ds["Achieved"] / ds["Target"] * 100
+        eff_summary = ds.groupby("Karigar_ID")["Efficiency"].mean().reset_index()
+        eff_summary.columns = ["Karigar_ID","Avg_Efficiency_%"]
+        piece_summary = piece_summary.merge(eff_summary, on="Karigar_ID", how="left").drop(columns=["Avg_Efficiency"])
+
+        # Salary paid from attendance
+        att = st.session_state.karigar_attendance.copy()
+        att["Date_dt"] = pd.to_datetime(att["Date"])
+        att = att[(att["Date_dt"] >= pd.Timestamp(perf_start)) & (att["Date_dt"] <= pd.Timestamp(perf_end))]
+
+        emp = st.session_state.employee_master[["E_Code","Name"]]
+        # Try to match Karigar_ID / E_Code
+        salary_summary = pd.DataFrame()
+        if "Total_Pay" in att.columns:
+            salary_summary = att.groupby("E_Code").agg(
+                Name=("Name","first"),
+                Days_Worked=("Date","nunique"),
+                Total_Salary_Paid=("Total_Pay","sum"),
+                Total_OT_Pay=("OT_Pay","sum"),
+            ).round(2).reset_index()
+
+        if not salary_summary.empty and not piece_summary.empty:
+            # Merge on E_Code = Karigar_ID (user should use same codes)
+            perf = salary_summary.merge(
+                piece_summary.rename(columns={"Karigar_ID":"E_Code"}),
+                on="E_Code", how="outer"
+            ).fillna(0)
+
+            perf["Value_Produced_Rs"]   = perf["Piece_Earned_Rs"].round(2)
+            perf["Salary_Paid_Rs"]      = perf["Total_Salary_Paid"].round(2)
+            perf["Surplus_Deficit_Rs"]  = (perf["Value_Produced_Rs"] - perf["Salary_Paid_Rs"]).round(2)
+            perf["ROI_%"] = ((perf["Value_Produced_Rs"] / perf["Salary_Paid_Rs"].replace(0,1)) * 100).round(1)
+            perf["Increment_Suggestion"] = perf["ROI_%"].apply(
+                lambda x: "🏆 Highly Recommended (+15%)" if x >= 150
+                else ("✅ Recommended (+10%)" if x >= 120
+                else ("➡️ Average (No change)" if x >= 90
+                else "⚠️ Review Required"))
+            )
+
+            # Summary cards
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Value Produced", f"Rs {perf['Value_Produced_Rs'].sum():,.0f}")
+            c2.metric("Total Salary Paid",    f"Rs {perf['Salary_Paid_Rs'].sum():,.0f}")
+            surplus = perf["Surplus_Deficit_Rs"].sum()
+            c3.metric("Surplus / Deficit",    f"Rs {surplus:,.0f}", delta=f"{surplus:+.0f}")
+
+            st.markdown("---")
+            st.markdown('<div class="section-title">Employee Performance Table</div>', unsafe_allow_html=True)
+
+            display_cols = ["E_Code","Name","Days_Worked","Total_Pieces","Avg_Efficiency_%",
+                            "Value_Produced_Rs","Salary_Paid_Rs","Surplus_Deficit_Rs","ROI_%","Increment_Suggestion"]
+            display_cols = [c for c in display_cols if c in perf.columns]
+            st.dataframe(perf[display_cols], use_container_width=True, hide_index=True)
+
+            # Individual drill-down
+            st.markdown('<div class="section-title">Individual Employee Drill-down</div>', unsafe_allow_html=True)
+            emp_sel_perf = st.selectbox("Select Employee", perf["E_Code"].tolist(), key="perf_emp_sel")
+            emp_perf_row = perf[perf["E_Code"] == emp_sel_perf]
+            if not emp_perf_row.empty:
+                row = emp_perf_row.iloc[0]
+                pc1, pc2, pc3, pc4 = st.columns(4)
+                pc1.metric("Value Produced",   f"Rs {row.get('Value_Produced_Rs',0):,.0f}")
+                pc2.metric("Salary Paid",      f"Rs {row.get('Salary_Paid_Rs',0):,.0f}")
+                pc3.metric("ROI",              f"{row.get('ROI_%',0):.1f}%")
+                pc4.metric("Avg Efficiency",   f"{row.get('Avg_Efficiency_%',0):.1f}%")
+                st.info(f"Increment Suggestion: {row.get('Increment_Suggestion','N/A')}")
+
+            ex1, ex2 = st.columns(2)
+            with ex1:
+                st.download_button("📥 Export Performance (Excel)",
+                    data=df_to_excel_bytes(perf[display_cols]),
+                    file_name="employee_performance.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            with ex2:
+                st.download_button("📥 Export Performance (CSV)",
+                    data=df_to_csv_bytes(perf[display_cols]),
+                    file_name="employee_performance.csv", mime="text/csv")
+        else:
+            st.info("Not enough data to generate performance report. Ensure Karigar_ID in Daily Sheet matches E_Code in Attendance.")
 
 # ─────────────────────────────────────────────
 # Footer
